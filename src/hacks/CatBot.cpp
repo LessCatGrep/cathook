@@ -706,7 +706,7 @@ static void cm()
         smart_crouch();
 
     //
-    static const int classes[3]{ tf_spy, tf_sniper, tf_pyro };
+    static const int classes[3]{ tf_scout, tf_pyro, tf_engineer };
     if (*auto_disguise && g_pPlayerResource->GetClass(LOCAL_E) == tf_spy && !IsPlayerDisguised(LOCAL_E) && disguise.test_and_set(3000))
     {
         int teamtodisguise = (LOCAL_E->m_iTeam() == TEAM_RED) ? TEAM_RED - 1 : TEAM_BLU - 1;
