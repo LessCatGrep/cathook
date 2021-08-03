@@ -52,6 +52,7 @@ void NetVars::Init()
         this->AttributeList             = gNetvars.get_offset("DT_EconEntity", "m_AttributeManager", "m_Item",
                                                   "m_AttributeList"); // hmmm
         this->flChargeBeginTime         = gNetvars.get_offset("DT_WeaponPipebombLauncher", "PipebombLauncherLocalData", "m_flChargeBeginTime");
+        this->flDetonateTime            = gNetvars.get_offset("DT_WeaponGrenadeLauncher", "m_flDetonateTime");
         this->flLastFireTime            = gNetvars.get_offset("DT_TFWeaponBase", "LocalActiveTFWeaponData", "m_flLastFireTime");
         this->flObservedCritChance      = gNetvars.get_offset("DT_TFWeaponBase", "LocalActiveTFWeaponData", "m_flObservedCritChance");
         this->bDistributed              = gNetvars.get_offset("DT_CurrencyPack", "m_bDistributed");
@@ -168,6 +169,7 @@ void NetVars::Init()
         this->m_iPing_Resource              = gNetvars.get_offset("DT_TFPlayerResource", "baseclass", "m_iPing");
         this->m_iDeaths_Resource            = gNetvars.get_offset("DT_TFPlayerResource", "baseclass", "m_iDeaths");
         this->m_iHealth_Resource            = gNetvars.get_offset("DT_TFPlayerResource", "baseclass", "m_iHealth");
+        this->m_iAccountID_Resource         = gNetvars.get_offset("DT_TFPlayerResource", "baseclass", "m_iAccountID");
         this->m_iTotalScore_Resource        = gNetvars.get_offset("DT_TFPlayerResource", "m_iTotalScore");
         this->m_iMaxHealth_Resource         = gNetvars.get_offset("DT_TFPlayerResource", "m_iMaxHealth");
         this->m_iMaxBuffedHealth_Resource   = gNetvars.get_offset("DT_TFPlayerResource", "m_iMaxBuffedHealth");

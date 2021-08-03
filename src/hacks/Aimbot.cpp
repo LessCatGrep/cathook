@@ -54,7 +54,7 @@ static settings::Float proj_start_vel{ "aimbot.projectile.initial-velocity", "0"
 static settings::Float sticky_autoshoot{ "aimbot.projectile.sticky-autoshoot", "0.5" };
 
 static settings::Boolean aimbot_debug{ "aimbot.debug", "0" };
-static settings::Boolean engine_projpred{ "aimbot.debug.engine-pp", "0" };
+settings::Boolean engine_projpred{ "aimbot.debug.engine-pp", "1" };
 
 static settings::Boolean auto_spin_up{ "aimbot.auto.spin-up", "0" };
 static settings::Boolean minigun_tapfire{ "aimbot.auto.tapfire", "false" };
@@ -117,6 +117,11 @@ static void spectatorUpdate()
             fov      = *specfov;
         }
     };
+}
+
+static bool playerTeamCheck(CachedEntity *entity)
+{
+    return (int) teammates == 2 || (entity->m_bEnemy() && !teammates) || (!entity->m_bEnemy() && teammates) || (CE_GOOD(LOCAL_W) && LOCAL_W->m_iClassID() == CL_CLASS(CTFCrossbow) && entity->m_iHealth() < entity->m_iMaxHealth());
 }
 
 #if ENABLE_VISUALS
@@ -347,37 +352,56 @@ static void CreateMove()
     // flNextPrimaryAttack meme
     if (only_can_shoot && g_pLocalPlayer->weapon()->m_iClassID() != CL_CLASS(CTFMinigun) && g_pLocalPlayer->weapon()->m_iClassID() != CL_CLASS(CTFLaserPointer))
     {
-        // Handle Compound bow
+        // Handle Huntsman
         if (g_pLocalPlayer->weapon()->m_iClassID() == CL_CLASS(CTFCompoundBow))
         {
             bool release = false;
+            if (autoshoot)
+                current_user_cmd->buttons |= IN_ATTACK;
             // Grab time when charge began
-            current_user_cmd->buttons |= IN_ATTACK;
             float begincharge = CE_FLOAT(g_pLocalPlayer->weapon(), netvar.flChargeBeginTime);
             float charge      = g_GlobalVars->curtime - begincharge;
+            if (!begincharge)
+                charge = 0.0f;
             int damage        = std::floor(50.0f + 70.0f * fminf(1.0f, charge));
             int charge_damage = std::floor(50.0f + 70.0f * fminf(1.0f, charge)) * 3.0f;
-            if (!wait_for_charge || (damage >= target_entity->m_iHealth() || charge_damage >= target_entity->m_iHealth()))
+            if (HasCondition<TFCond_Slowed>(LOCAL_E) && (autoshoot || !(current_user_cmd->buttons & IN_ATTACK)) && (!wait_for_charge || (charge >= 1.0f || damage >= target_entity->m_iHealth() || charge_damage >= target_entity->m_iHealth())))
                 release = true;
+            // Shoot projectile
             if (release)
-                DoAutoshoot();
-            static bool currently_charging_huntsman = false;
-
-            // Hunstman started charging
-            if (CE_FLOAT(g_pLocalPlayer->weapon(), netvar.flChargeBeginTime) != 0)
-                currently_charging_huntsman = true;
-
-            // Huntsman was released
-            if (!(current_user_cmd->buttons & IN_ATTACK) && currently_charging_huntsman)
             {
-                currently_charging_huntsman = false;
+                DoAutoshoot();
                 Aim(target_entity);
             }
-            else
-                return;
-
-            // Not release type weapon
         }
+        // Loose cannon
+        else if (LOCAL_W->m_iClassID() == CL_CLASS(CTFCannon))
+        {
+            // TODO: add logic for charge time
+            bool release = false;
+            if (autoshoot)
+                current_user_cmd->buttons |= IN_ATTACK;
+            float detonate_time = CE_FLOAT(LOCAL_W, netvar.flDetonateTime);
+            // Currently charging up
+            if (detonate_time > g_GlobalVars->curtime)
+            {
+                if (wait_for_charge)
+                {
+                    // Shoot when a straight shot would result in only 100ms left on fuse upon target hit
+                    float best_charge = PredictEntity(target_entity, false).DistTo(g_pLocalPlayer->v_Eye) / cur_proj_speed + 0.1;
+                    if (detonate_time - g_GlobalVars->curtime <= best_charge)
+                        release = true;
+                }
+                else
+                    release = true;
+            }
+            if (release)
+            {
+                DoAutoshoot();
+                Aim(target_entity);
+            }
+        }
+        // Not release type weapon
         else if (LOCAL_W->m_iClassID() == CL_CLASS(CTFPipebombLauncher))
         {
             float chargebegin = CE_FLOAT(LOCAL_W, netvar.flChargeBeginTime);
@@ -655,6 +679,11 @@ CachedEntity *RetrieveBestTarget(bool aimkey_state)
                     break;
                 }
             }
+            // Crossbow logic
+            if (!ent->m_bEnemy() && ent->m_Type() == ENTITY_PLAYER && CE_GOOD(LOCAL_W) && LOCAL_W->m_iClassID() == CL_CLASS(CTFCrossbow))
+            {
+                scr = ((ent->m_iMaxHealth() - ent->m_iHealth()) / ent->m_iMaxHealth()) * (*priority_mode == 2 ? 16384.0f : 2000.0f);
+            }
             // Compare the top score to our current ents score
             if (scr > target_highest_score)
             {
@@ -689,7 +718,7 @@ bool IsTargetStateGood(CachedEntity *entity)
         if (!entity->m_bAlivePlayer())
             return false;
         // Teammates
-        if ((int) teammates != 2 && ((!entity->m_bEnemy() && !teammates) || (entity->m_bEnemy() && teammates)))
+        if (!playerTeamCheck(entity))
             return false;
         // Distance
         if (EffectiveTargetingRange())
@@ -1055,22 +1084,21 @@ void DoAutoshoot(CachedEntity *target_entity)
         return;
     if (IsPlayerDisguised(g_pLocalPlayer->entity) && !autoshoot_disguised)
         return;
-    // Handle Compound bow
-    if (g_pLocalPlayer->weapon()->m_iClassID() == CL_CLASS(CTFCompoundBow))
+    // Handle Huntsman/Loose cannon
+    if (g_pLocalPlayer->weapon()->m_iClassID() == CL_CLASS(CTFCompoundBow) || g_pLocalPlayer->weapon()->m_iClassID() == CL_CLASS(CTFCannon))
     {
-        // Release hunstman if over huntsmans limit
-        if (begancharge)
+        if (!only_can_shoot)
         {
-            current_user_cmd->buttons &= ~IN_ATTACK;
-            hacks::shared::antiaim::SetSafeSpace(5);
-            begancharge = false;
+            if (!begancharge)
+            {
+                current_user_cmd->buttons |= IN_ATTACK;
+                begancharge = true;
+                return;
+            }
         }
-        // Pull string if charge isnt enough
-        else
-        {
-            current_user_cmd->buttons |= IN_ATTACK;
-            begancharge = true;
-        }
+        begancharge = false;
+        current_user_cmd->buttons &= ~IN_ATTACK;
+        hacks::shared::antiaim::SetSafeSpace(5);
         return;
     }
     else
@@ -1231,20 +1259,20 @@ int BestHitbox(CachedEntity *target)
     switch (*hitbox_mode)
     {
     case 0:
-    { // AUTO-HEAD priority
+    { // AUTO priority
         int preferred = int(hitbox);
         bool headonly = false; // Var to keep if we can bodyshot
 
         IF_GAME(IsTF())
         {
             int ci    = g_pLocalPlayer->weapon()->m_iClassID();
-            preferred = hitbox_t::spine_2;
+            preferred = hitbox_t::spine_3;
+
             // Sniper rifle
             if (g_pLocalPlayer->holding_sniper_rifle)
-            {
                 headonly = CanHeadshot();
-                // Hunstman
-            }
+
+            // Hunstman
             else if (ci == CL_CLASS(CTFCompoundBow))
             {
                 float begincharge = CE_FLOAT(g_pLocalPlayer->weapon(), netvar.flChargeBeginTime);
@@ -1255,6 +1283,8 @@ int BestHitbox(CachedEntity *target)
                 else
                     preferred = hitbox_t::head;
             }
+
+            // Ambassador
             else if (IsAmbassador(g_pLocalPlayer->weapon()))
             {
                 headonly = AmbassadorCanHeadshot();
@@ -1263,54 +1293,34 @@ int BestHitbox(CachedEntity *target)
                 // potentially be higher
                 if (target->m_iHealth() <= 18 || IsPlayerCritBoosted(g_pLocalPlayer->entity) || target->m_flDistance() > 1200)
                     headonly = false;
-                // Rocket launcher
-            }
-            // These weapons should aim at the foot if the target is grounded
-            else if (ci == CL_CLASS(CTFPipebombLauncher) || ci == CL_CLASS(CTFRocketLauncher) || ci == CL_CLASS(CTFParticleCannon) || ci == CL_CLASS(CTFRocketLauncher_AirStrike) || ci == CL_CLASS(CTFRocketLauncher_Mortar))
-            {
-                preferred = hitbox_t::foot_L;
-            }
-            // These weapons should aim at the center of mass due to little/no splash
-            else if (ci == CL_CLASS(CTFRocketLauncher_DirectHit) || ci == CL_CLASS(CTFGrenadeLauncher))
-            {
-                preferred = hitbox_t::spine_3;
             }
 
-            // Airborn targets should always get hit in center
-            if (GetWeaponMode() == weaponmode::weapon_projectile)
+            // Rockets and stickies should aim at the foot if the target is on the ground
+            else if (ci == CL_CLASS(CTFPipebombLauncher) || ci == CL_CLASS(CTFRocketLauncher) || ci == CL_CLASS(CTFParticleCannon) || ci == CL_CLASS(CTFRocketLauncher_AirStrike) || ci == CL_CLASS(CTFRocketLauncher_Mortar) || ci == CL_CLASS(CTFRocketLauncher_DirectHit))
             {
-                if (g_pLocalPlayer->weapon()->m_iClassID() != CL_CLASS(CTFCompoundBow))
-                {
-                    bool ground = CE_INT(target, netvar.iFlags) & (1 << 0);
-                    if (!ground)
-                        preferred = hitbox_t::spine_3;
-                }
+                bool ground = CE_INT(target, netvar.iFlags) & (1 << 0);
+                if (ground)
+                    preferred = hitbox_t::foot_L;
             }
 
             // Bodyshot handling
             if (g_pLocalPlayer->holding_sniper_rifle)
             {
-
                 float cdmg = CE_FLOAT(LOCAL_W, netvar.flChargedDamage);
                 float bdmg = 50;
+                // Vaccinator damage correction, protects against 20% of damage
                 if (CarryingHeatmaker())
                 {
                     bdmg = (bdmg * .80) - 1;
                     cdmg = (cdmg * .80) - 1;
                 }
-                // Darwins damage correction, protects against 15% of damage
-                //                if (HasDarwins(target))
-                //                {
-                //                    bdmg = (bdmg * .85) - 1;
-                //                    cdmg = (cdmg * .85) - 1;
-                //                }
                 // Vaccinator damage correction, protects against 75% of damage
                 if (HasCondition<TFCond_UberBulletResist>(target))
                 {
                     bdmg = (bdmg * .25) - 1;
                     cdmg = (cdmg * .25) - 1;
-                    // Passive bullet resist protects against 10% of damage
                 }
+                // Passive bullet resist protects against 10% of damage
                 else if (HasCondition<TFCond_SmallBulletResist>(target))
                 {
                     bdmg = (bdmg * .90) - 1;
@@ -1335,12 +1345,10 @@ int BestHitbox(CachedEntity *target)
                     headonly  = false;
                 }
             }
-            // In counter-strike source, headshots are what we want
         }
-        else IF_GAME(IsCSS())
-        {
-            headonly = true;
-        }
+        // In counter-strike source, headshots are what we want
+        else IF_GAME(IsCSS()) headonly = true;
+
         // Head only
         if (headonly)
         {
@@ -1355,19 +1363,17 @@ int BestHitbox(CachedEntity *target)
             return preferred;
         // Else attempt to find any hitbox at all
         for (int i = projectile_mode ? 1 : 0; i < target->hitboxes.GetNumHitboxes() && i < 6; i++)
-        {
             if (target->hitboxes.VisibilityCheck(i))
                 return i;
-        }
     }
     break;
     case 1:
-    { // AUTO-CLOSEST priority, Return closest hitbox to crosshair
+    { // AUTO priority, return closest hitbox to crosshair
         return ClosestHitbox(target);
     }
     break;
     case 2:
-    { // STATIC priority, Return a user chosen hitbox
+    { // STATIC priority, return a user chosen hitbox
         return *hitbox;
     }
     break;
@@ -1491,6 +1497,7 @@ bool UpdateAimkey()
     static bool aimkey_flip       = false;
     static bool pressed_last_tick = false;
     bool allow_aimkey             = true;
+    static bool last_allow_aimkey = true;
 
     // Check if aimkey is used
     if (aimkey && aimkey_mode)
@@ -1516,6 +1523,19 @@ bool UpdateAimkey()
         default:
             break;
         }
+        // Huntsman and Loose Cannon need special logic since we aim upon m1 being released
+        if (!autoshoot && CE_GOOD(LOCAL_W) && (LOCAL_W->m_iClassID() == CL_CLASS(CTFCompoundBow) || LOCAL_W->m_iClassID() == CL_CLASS(CTFCannon)))
+        {
+            if (!allow_aimkey && last_allow_aimkey)
+            {
+                allow_aimkey      = true;
+                last_allow_aimkey = false;
+            }
+            else
+                last_allow_aimkey = allow_aimkey;
+        }
+        else
+            last_allow_aimkey = allow_aimkey;
         pressed_last_tick = key_down;
     }
     // Return whether the aimkey allows aiming
@@ -1608,15 +1628,17 @@ void rvarCallback(settings::VariableBase<float> &, float after)
 {
     force_backtrack_aimbot = after >= 200.0f;
 }
-static InitRoutine EC([]() {
-    hacks::tf2::backtrack::latency.installChangeCallback(rvarCallback);
-    EC::Register(EC::LevelInit, Reset, "INIT_Aimbot", EC::average);
-    EC::Register(EC::LevelShutdown, Reset, "RESET_Aimbot", EC::average);
-    EC::Register(EC::CreateMove, CreateMove, "CM_Aimbot", EC::late);
-    EC::Register(EC::CreateMoveWarp, CreateMoveWarp, "CMW_Aimbot", EC::late);
+static InitRoutine EC(
+    []()
+    {
+        hacks::tf2::backtrack::latency.installChangeCallback(rvarCallback);
+        EC::Register(EC::LevelInit, Reset, "INIT_Aimbot", EC::average);
+        EC::Register(EC::LevelShutdown, Reset, "RESET_Aimbot", EC::average);
+        EC::Register(EC::CreateMove, CreateMove, "CM_Aimbot", EC::late);
+        EC::Register(EC::CreateMoveWarp, CreateMoveWarp, "CMW_Aimbot", EC::late);
 #if ENABLE_VISUALS
-    EC::Register(EC::Draw, DrawText, "DRAW_Aimbot", EC::average);
+        EC::Register(EC::Draw, DrawText, "DRAW_Aimbot", EC::average);
 #endif
-});
+    });
 
 } // namespace hacks::shared::aimbot

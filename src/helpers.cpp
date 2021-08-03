@@ -1283,7 +1283,9 @@ bool GetProjectileData(CachedEntity *weapon, float &speed, float &gravity, float
     }
     case CL_CLASS(CTFCannon):
     {
-        rspeed = 1453.9f;
+        rspeed       = 1453.9f;
+        rgrav        = 1.0f;
+        rinitial_vel = 200.0f;
         break;
     }
     case CL_CLASS(CTFGrenadeLauncher):
@@ -1314,8 +1316,21 @@ bool GetProjectileData(CachedEntity *weapon, float &speed, float &gravity, float
     case CL_CLASS(CTFCompoundBow):
     {
         float chargetime = g_GlobalVars->curtime - CE_FLOAT(weapon, netvar.flChargeBeginTime);
-        rspeed           = RemapValClamped(chargetime, 0.0f, 1.f, 1800, 2600);
-        rgrav            = RemapValClamped(chargetime, 0.0f, 1.f, 0.5, 0.1) - 0.05;
+        if (CE_FLOAT(weapon, netvar.flChargeBeginTime) == 0)
+            chargetime = 0;
+        else
+        {
+            static const ConVar *pUpdateRate = g_pCVar->FindVar("cl_updaterate");
+            if (!pUpdateRate)
+                pUpdateRate = g_pCVar->FindVar("cl_updaterate");
+            else
+            {
+                chargetime += TICKS_TO_TIME(1);
+                // chargetime += ROUND_TO_TICKS(MAX(cl_interp->GetFloat(), cl_interp_ratio->GetFloat() / pUpdateRate->GetFloat()));
+            }
+        }
+        rspeed = RemapValClamped(chargetime, 0.0f, 1.f, 1800, 2600);
+        rgrav  = RemapValClamped(chargetime, 0.0f, 1.f, 0.5, 0.1);
         break;
     }
     case CL_CLASS(CTFBat_Giftwrap):
@@ -1388,7 +1403,7 @@ bool GetProjectileData(CachedEntity *weapon, float &speed, float &gravity, float
 /*const char* MakeInfoString(IClientEntity* player) {
     char* buf = new char[256]();
     player_info_t info;
-    if (!engineClient->GetPlayerInfo(player->entindex(), &info)) return (const
+    if (!GetPlayerInfo(player->entindex(), &info)) return (const
 char*)0; logging::Info("a"); int hWeapon = NET_INT(player,
 netvar.hActiveWeapon); if (NET_BYTE(player, netvar.iLifeState)) { sprintf(buf,
 "%s is dead %s", info.name, tfclasses[NET_INT(player, netvar.iClass)]); return
@@ -1834,10 +1849,10 @@ Vector getShootPos(Vector angle)
         vecOffset = Vector(16.0f, 6.0f, -8.0f);
         break;
 
-        // Huntsman
-        /*case CL_CLASS(CTFCompoundBow):
-            vecOffset = Vector(23.5f, -8.0f, -3.0f);
-            break;*/
+    // Huntsman
+    case CL_CLASS(CTFCompoundBow):
+        vecOffset = Vector(23.5f, -8.0f, -3.0f);
+        break;
 
     default:
         break;
@@ -1930,6 +1945,16 @@ int SharedRandomInt(unsigned iseed, const char *sharedname, int iMinVal, int iMa
     int seed = SeedFileLineHash(iseed, sharedname, additionalSeed);
     g_pUniformStream->SetSeed(seed);
     return g_pUniformStream->RandomInt(iMinVal, iMaxVal);
+}
+
+bool GetPlayerInfo(int idx, player_info_s *info)
+{
+    bool res = g_IEngine->GetPlayerInfo(idx, info);
+    if (!res)
+        return res;
+    // Fix friends ID
+    info->friendsID = g_pPlayerResource->GetAccountID(idx);
+    return res;
 }
 
 bool HookNetvar(std::vector<std::string> path, ProxyFnHook &hook, RecvVarProxyFn function)
